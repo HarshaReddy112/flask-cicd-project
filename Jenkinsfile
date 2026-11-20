@@ -37,42 +37,57 @@ pipeline {
         }
 
         stage('Deploy Application') {
-            steps {
-                sh '''
-                    mkdir -p "$DEPLOY_DIR"
+    steps {
+        sh '''
+            mkdir -p "$DEPLOY_DIR"
 
-                    cp app.py requirements.txt "$DEPLOY_DIR/"
+            cp app.py requirements.txt "$DEPLOY_DIR/"
 
-                    if [ -f "$DEPLOY_DIR/app.pid" ]; then
-                        kill "$(cat "$DEPLOY_DIR/app.pid")" 2>/dev/null || true
-                    fi
+            if [ -f "$DEPLOY_DIR/app.pid" ]; then
+                kill "$(cat "$DEPLOY_DIR/app.pid")" 2>/dev/null || true
+            fi
 
-                    nohup "$WORKSPACE/venv/bin/python" \
-                    "$DEPLOY_DIR/app.py" \
-                    > "$DEPLOY_DIR/app.log" 2>&1 &
+            cd "$DEPLOY_DIR"
 
-                    echo $! > "$DEPLOY_DIR/app.pid"
+            nohup setsid "$WORKSPACE/venv/bin/python" \
+                app.py > app.log 2>&1 < /dev/null &
 
-                    sleep 3
-                '''
-            }
-        }
+            echo $! > app.pid
 
-        stage('Post Deployment Verification') {
-            steps {
-                sh '''
-                    RESPONSE=$(curl -s -w "\\n%{http_code}" \
-                    http://127.0.0.1:$APP_PORT/)
+            sleep 3
 
-                    echo "$RESPONSE"
+            if ! kill -0 "$(cat app.pid)" 2>/dev/null; then
+                cat app.log
+                exit 1
+            fi
+        '''
+    }
+}
+        
+stage('Post Deployment Verification') {
+    steps {
+        sh '''
+            for i in $(seq 1 10); do
+                if curl -fsS http://127.0.0.1:$APP_PORT/; then
+                    break
+                fi
 
-                    echo "$RESPONSE" | grep -q \
-                    "Welcome to Flask CI/CD Pipeline!"
+                sleep 2
+            done
 
-                    echo "$RESPONSE" | grep -q "200"
-                '''
-            }
-        }
+            RESPONSE=$(curl -s -w "\\n%{http_code}" \
+                http://127.0.0.1:$APP_PORT/)
+
+            echo "$RESPONSE"
+
+            echo "$RESPONSE" | grep -q \
+                "Welcome to Flask CI/CD Pipeline!"
+
+            echo "$RESPONSE" | grep -q "200"
+        '''
+    }
+}
+
     }
 
     post {
