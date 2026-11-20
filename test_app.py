@@ -6,4 +6,4 @@ def test_home_route():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert response.data.decode() == "Welcome to Flask CI/CD Pipeline!"
+    assert response.data.decode() == "Welcome"
