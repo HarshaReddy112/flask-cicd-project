@@ -1,4 +1,5 @@
 
+
 pipeline {
     agent any
 
@@ -7,8 +8,8 @@ pipeline {
     }
 
     environment {
-        DEPLOY_DIR = "${WORKSPACE}/deployment"
         APP_PORT = "5001"
+        APP_NAME = "flask-app"
     }
 
     stages {
@@ -30,64 +31,53 @@ pipeline {
 
         stage('Unit Testing') {
             steps {
+                sh 'venv/bin/pytest -v test_app.py'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
                 sh '''
-                    venv/bin/pytest -v test_app.py
+                    docker build -t flask-app .
                 '''
             }
         }
 
         stage('Deploy Application') {
-    steps {
-        sh '''
-            mkdir -p "$DEPLOY_DIR"
+            steps {
+                sh '''
+                    docker rm -f $APP_NAME 2>/dev/null || true
 
-            cp app.py requirements.txt "$DEPLOY_DIR/"
+                    docker run -d \
+                        --name $APP_NAME \
+                        -p 5001:5001 \
+                        flask-app
+                '''
+            }
+        }
 
-            if [ -f "$DEPLOY_DIR/app.pid" ]; then
-                kill "$(cat "$DEPLOY_DIR/app.pid")" 2>/dev/null || true
-            fi
+        stage('Post Deployment Verification') {
+            steps {
+                sh '''
+                    for i in $(seq 1 15); do
+                        if curl -fsS http://127.0.0.1:5001/; then
+                            break
+                        fi
+                        sleep 2
+                    done
 
-            cd "$DEPLOY_DIR"
+                    RESPONSE=$(curl -s -w "\\n%{http_code}" \
+                        http://127.0.0.1:5001/)
 
-            nohup setsid "$WORKSPACE/venv/bin/python" \
-                app.py > app.log 2>&1 < /dev/null &
+                    echo "$RESPONSE"
 
-            echo $! > app.pid
+                    echo "$RESPONSE" | grep -q \
+                        "Welcome to Flask CI/CD Pipeline!"
 
-            sleep 3
-
-            if ! kill -0 "$(cat app.pid)" 2>/dev/null; then
-                cat app.log
-                exit 1
-            fi
-        '''
-    }
-}
-        
-stage('Post Deployment Verification') {
-    steps {
-        sh '''
-            for i in $(seq 1 10); do
-                if curl -fsS http://127.0.0.1:$APP_PORT/; then
-                    break
-                fi
-
-                sleep 2
-            done
-
-            RESPONSE=$(curl -s -w "\\n%{http_code}" \
-                http://127.0.0.1:$APP_PORT/)
-
-            echo "$RESPONSE"
-
-            echo "$RESPONSE" | grep -q \
-                "Welcome to Flask CI/CD Pipeline!"
-
-            echo "$RESPONSE" | grep -q "200"
-        '''
-    }
-}
-
+                    echo "$RESPONSE" | grep -q "200"
+                '''
+            }
+        }
     }
 
     post {
@@ -96,8 +86,7 @@ stage('Post Deployment Verification') {
         }
 
         failure {
-            echo 'CI/CD Pipeline failed. Check the console output.'
+            echo 'CI/CD Pipeline failed!'
         }
     }
 }
-
